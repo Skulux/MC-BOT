@@ -144,6 +144,109 @@ async function equipByName(name, destination = "hand") {
   return item;
 }
 
+let mcDataCache = null;
+async function getMcData() {
+  if (!mcDataCache) {
+    mcDataCache = await import("minecraft-data").then((m) => m.default(bot.version));
+  }
+  return mcDataCache;
+}
+
+function getInventoryCount(name) {
+  return bot
+    .inventory
+    .items()
+    .filter((i) => i.name === name)
+    .reduce((sum, i) => sum + i.count, 0);
+}
+
+function getInventoryItemsMatching(predicate) {
+  return bot.inventory.items().filter(predicate);
+}
+
+function getPlankItems() {
+  return getInventoryItemsMatching((i) => i.name.endsWith("_planks"));
+}
+
+function getPlankCount() {
+  return getPlankItems().reduce((sum, i) => sum + i.count, 0);
+}
+
+function getLogItems() {
+  return getInventoryItemsMatching((i) => i.name.endsWith("_log") || i.name.endsWith("_stem"));
+}
+
+function logToPlankName(logName) {
+  if (logName.endsWith("_log")) return logName.replace("_log", "_planks");
+  if (logName.endsWith("_stem")) return logName.replace("_stem", "_planks");
+  return "oak_planks";
+}
+
+async function craftItem(name, count = 1, tableBlock = null) {
+  const mcData = await getMcData();
+  const item = mcData.itemsByName?.[name];
+  if (!item) throw new Error(`Unknown item: ${name}`);
+  const recipes = bot.recipesFor(item.id, null, 1, tableBlock);
+  if (!recipes.length) throw new Error(`No recipe available for ${name}`);
+  const recipe = recipes[0];
+  const perCraft = recipe?.result?.count ?? 1;
+  const craftTimes = Math.ceil(count / perCraft);
+  await bot.craft(recipe, craftTimes, tableBlock);
+}
+
+async function ensureCraftingTable() {
+  const tableCount = getInventoryCount("crafting_table");
+  if (!tableCount) {
+    if (getPlankCount() < 4) {
+      const logItem = getLogItems()[0];
+      if (!logItem) throw new Error("No logs available to craft planks");
+      await craftItem(logToPlankName(logItem.name), 4);
+    }
+    await craftItem("crafting_table", 1);
+  }
+  const reference = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+  if (!reference) throw new Error("No block to place crafting table on");
+  await equipByName("crafting_table");
+  await bot.placeBlock(reference, new Vec3(0, 1, 0));
+  return bot.blockAt(reference.position.offset(0, 1, 0));
+}
+
+async function ensureBasicPickaxe() {
+  const pickaxe = bot.inventory.items().find((i) => i.name.endsWith("_pickaxe"));
+  if (pickaxe) return pickaxe.name;
+
+  const logNames = [
+    "oak_log",
+    "spruce_log",
+    "birch_log",
+    "jungle_log",
+    "acacia_log",
+    "dark_oak_log",
+    "mangrove_log",
+    "cherry_log"
+  ];
+  if (getPlankCount() < 5) {
+    if (!bot.collectBlock?.collect) throw new Error("collectBlock plugin not available");
+    const logBlocks = bot.findBlocks({
+      matching: (b) => logNames.includes(b?.name),
+      maxDistance: 32,
+      count: 2
+    });
+    if (!logBlocks.length) throw new Error("No logs found nearby to craft a pickaxe");
+    const blocks = logBlocks.map((pos) => bot.blockAt(pos)).filter(Boolean);
+    await bot.collectBlock.collect(blocks.slice(0, 2));
+    const logItem = getLogItems()[0];
+    if (!logItem) throw new Error("No logs available to craft planks");
+    await craftItem(logToPlankName(logItem.name), 8);
+  }
+  if (getInventoryCount("stick") < 2) {
+    await craftItem("stick", 2);
+  }
+  const tableBlock = await ensureCraftingTable();
+  await craftItem("wooden_pickaxe", 1, tableBlock);
+  return "wooden_pickaxe";
+}
+
 // ---- Movement control (simple WASD-like) ----
 const controlStates = {
   forward: false,
@@ -160,6 +263,48 @@ function applyControlStates() {
     bot.setControlState(k, !!v);
   }
 }
+
+let basePosition = null;
+let autoActionsEnabled = true;
+let autoActionBusy = false;
+
+async function maybeEat() {
+  if (bot.food >= 18) return false;
+  const mcData = await getMcData();
+  const foodItem = bot
+    .inventory
+    .items()
+    .find((i) => mcData.foodsByName?.[i.name]);
+  if (!foodItem) return false;
+  await bot.equip(foodItem, "hand");
+  await bot.consume();
+  return true;
+}
+
+function findHostileEntity() {
+  return bot.nearestEntity((entity) => entity.type === "mob" && entity.kind === "Hostile");
+}
+
+async function maybeDefend() {
+  const target = findHostileEntity();
+  if (!target) return false;
+  if (bot.entity.position.distanceTo(target.position) > 6) return false;
+  await bot.attack(target);
+  return true;
+}
+
+setInterval(async () => {
+  if (!autoActionsEnabled || autoActionBusy) return;
+  autoActionBusy = true;
+  try {
+    await maybeEat();
+    await maybeDefend();
+  } catch (e) {
+    console.warn("[auto-actions] error:", e?.message ?? e);
+  } finally {
+    autoActionBusy = false;
+  }
+}, 1000);
 
 // ---- WebSocket control server ----
 const wss = new WebSocketServer({ port: WS_PORT });
@@ -248,6 +393,72 @@ wss.on("connection", (ws) => {
         for (const k of Object.keys(controlStates)) controlStates[k] = false;
         applyControlStates();
         return replyOk({ type: "stop" });
+      }
+
+      if (cmd === "set_base") {
+        const pos = bot.entity?.position;
+        if (!pos) return replyErr("Bot position unavailable");
+        basePosition = pos.clone();
+        return replyOk({
+          type: "set_base",
+          base: { x: basePosition.x, y: basePosition.y, z: basePosition.z }
+        });
+      }
+
+      if (cmd === "get") {
+        const name = String(msg.name ?? "");
+        const count = Number(msg.count ?? 1);
+        if (!name) return replyErr("Missing item name");
+        if (!Number.isFinite(count) || count <= 0) return replyErr("Invalid count");
+
+        if (getInventoryCount(name) >= count) {
+          return replyOk({ type: "get", name, count, status: "already_have" });
+        }
+
+        const mcData = await getMcData();
+        const blockName =
+          mcData.blocksByName?.[name] ? name : mcData.blocksByName?.[`${name}_ore`] ? `${name}_ore` : null;
+        if (!blockName) {
+          return replyErr(`No matching block found for ${name}`);
+        }
+
+        if (!bot.collectBlock?.collect) {
+          return replyErr("collectBlock plugin not available on bot");
+        }
+
+        const matchPos = bot.findBlocks({
+          matching: (b) => b?.name === blockName,
+          maxDistance: 64,
+          count
+        });
+        if (!matchPos.length) return replyErr(`No blocks found: ${blockName}`);
+
+        const sample = bot.blockAt(matchPos[0]);
+        if (sample && !bot.canDigBlock(sample)) {
+          const mcDataSample = await getMcData();
+          const toolIds = Object.keys(sample.harvestTools ?? {}).map((id) => Number(id));
+          const toolNames = toolIds
+            .map((id) => mcDataSample.items?.[id]?.name)
+            .filter(Boolean);
+          if (!toolNames.length) return replyErr(`Cannot dig ${blockName} with current tools`);
+          const hasTool = toolNames.some((toolName) => getInventoryCount(toolName) > 0);
+          if (!hasTool) {
+            if (toolNames.includes("wooden_pickaxe")) {
+              await ensureBasicPickaxe();
+            } else {
+              return replyErr(`Required tool missing: ${toolNames.join(", ")}`);
+            }
+          }
+        }
+
+        const blocks = matchPos.map((pos) => bot.blockAt(pos)).filter(Boolean);
+        await bot.collectBlock.collect(blocks.slice(0, count));
+        return replyOk({ type: "get", name, block: blockName, collected: Math.min(count, blocks.length) });
+      }
+
+      if (cmd === "automatic_actions") {
+        autoActionsEnabled = !!msg.enabled;
+        return replyOk({ type: "automatic_actions", enabled: autoActionsEnabled });
       }
 
       if (cmd === "dig") {
