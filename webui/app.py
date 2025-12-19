@@ -360,55 +360,66 @@ def create_app() -> Flask:
             {"role": "user", "content": prompt}
         ]
         tools = get_tool_schema()
-        resp = requests.post(
-            f"{app.config['OLLAMA_URL']}/api/chat",
-            json={
-                "model": app.config["OLLAMA_MODEL"],
-                "messages": messages,
-                "tools": tools,
-                "stream": False
-            }
-        )
-        resp.raise_for_status()
-        data = parse_ollama_json(resp)
-        message = data.get("message", {})
+        tool_results = []
+        tool_calls_used = []
+        current_messages = list(messages)
+        final_message = {}
 
-        tool_calls = message.get("tool_calls") or []
-        if not tool_calls and isinstance(message.get("content"), str):
-            content = message["content"]
-            find_match = re.search(r"/find\s+([a-zA-Z_]+)(?:\s+count\s+(\d+))?", content)
-            scan_match = re.search(r"/scan(?:\s+(\d+))?", content)
-            dig_match = re.search(r"/dig\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)", content)
-            if find_match:
-                tool_calls = [{
-                    "function": {
-                        "name": "find_blocks",
-                        "arguments": {
-                            "name": find_match.group(1),
-                            "count": int(find_match.group(2) or 10)
+        for _ in range(5):
+            resp = requests.post(
+                f"{app.config['OLLAMA_URL']}/api/chat",
+                json={
+                    "model": app.config["OLLAMA_MODEL"],
+                    "messages": current_messages,
+                    "tools": tools,
+                    "stream": False
+                }
+            )
+            resp.raise_for_status()
+            data = parse_ollama_json(resp)
+            message = data.get("message", {})
+            final_message = message
+
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls and isinstance(message.get("content"), str):
+                content = message["content"]
+                find_match = re.search(r"/find\s+([a-zA-Z_]+)(?:\s+count\s+(\d+))?", content)
+                scan_match = re.search(r"/scan(?:\s+(\d+))?", content)
+                dig_match = re.search(r"/dig\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)", content)
+                if find_match:
+                    tool_calls = [{
+                        "function": {
+                            "name": "find_blocks",
+                            "arguments": {
+                                "name": find_match.group(1),
+                                "count": int(find_match.group(2) or 10)
+                            }
                         }
-                    }
-                }]
-            elif scan_match:
-                tool_calls = [{
-                    "function": {
-                        "name": "scan_blocks",
-                        "arguments": {"radius": int(scan_match.group(1) or 6)}
-                    }
-                }]
-            elif dig_match:
-                tool_calls = [{
-                    "function": {
-                        "name": "dig_block",
-                        "arguments": {
-                            "x": int(dig_match.group(1)),
-                            "y": int(dig_match.group(2)),
-                            "z": int(dig_match.group(3))
+                    }]
+                elif scan_match:
+                    tool_calls = [{
+                        "function": {
+                            "name": "scan_blocks",
+                            "arguments": {"radius": int(scan_match.group(1) or 6)}
                         }
-                    }
-                }]
-        if tool_calls:
-            tool_results = []
+                    }]
+                elif dig_match:
+                    tool_calls = [{
+                        "function": {
+                            "name": "dig_block",
+                            "arguments": {
+                                "x": int(dig_match.group(1)),
+                                "y": int(dig_match.group(2)),
+                                "z": int(dig_match.group(3))
+                            }
+                        }
+                    }]
+
+            if not tool_calls:
+                break
+
+            tool_calls_used.extend(tool_calls)
+            current_messages.append(message)
             for call in tool_calls:
                 fn = call.get("function", {})
                 name = fn.get("name")
@@ -418,37 +429,20 @@ def create_app() -> Flask:
                         args = json.loads(args)
                     except json.JSONDecodeError:
                         args = {}
+                result = run_tool_call(name, args)
                 tool_results.append({
                     "role": "tool",
                     "name": name,
-                    "content": json.dumps(run_tool_call(name, args))
+                    "content": json.dumps(result)
                 })
-            followup_messages = messages + [message] + tool_results
-            followup = requests.post(
-                f"{app.config['OLLAMA_URL']}/api/chat",
-                json={
-                    "model": app.config["OLLAMA_MODEL"],
-                    "messages": followup_messages,
-                    "stream": False
-                }
-            )
-            followup.raise_for_status()
-            final_message = parse_ollama_json(followup).get("message", {})
-            new_memory = memory + [
-                {"role": "user", "content": prompt},
-                message,
-                *tool_results,
-                {"role": "assistant", "content": final_message.get("content", "")}
-            ]
-            save_ai_memory(new_memory)
-            return jsonify({"response": final_message.get("content", ""), "tools_used": tool_calls})
+                current_messages.append(tool_results[-1])
 
         new_memory = memory + [
             {"role": "user", "content": prompt},
-            {"role": "assistant", "content": message.get("content", "")}
+            *current_messages[1:]
         ]
         save_ai_memory(new_memory)
-        return jsonify({"response": message.get("content", ""), "tools_used": []})
+        return jsonify({"response": final_message.get("content", ""), "tools_used": tool_calls_used})
 
     return app
 
