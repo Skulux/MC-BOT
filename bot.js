@@ -323,7 +323,6 @@ async function ensureToolByName(toolName) {
 }
 
 async function ensureFuelItem() {
-  const fuelPriority = ["coal", "charcoal", "planks", "log", "stick"];
   const items = bot.inventory.items();
   const fuelItem =
     items.find((i) => i.name === "coal") ||
@@ -624,6 +623,14 @@ wss.on("connection", (ws) => {
         basePosition = pos.clone();
         return replyOk({
           type: "set_base",
+          base: { x: basePosition.x, y: basePosition.y, z: basePosition.z }
+        });
+      }
+
+      if (cmd === "get_base") {
+        if (!basePosition) return replyErr("Base position not set");
+        return replyOk({
+          type: "get_base",
           base: { x: basePosition.x, y: basePosition.y, z: basePosition.z }
         });
       }

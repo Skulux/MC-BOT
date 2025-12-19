@@ -189,9 +189,33 @@
       </div>
 
       <div class="card">
+        <h2>XYZ Position</h2>
+        <div class="status">
+          <div class="pill" id="posX">X: --</div>
+          <div class="pill" id="posY">Y: --</div>
+          <div class="pill" id="posZ">Z: --</div>
+        </div>
+        <button class="ghost" id="posRefreshBtn">Refresh Position</button>
+      </div>
+
+      <div class="card">
         <h2>Chat</h2>
         <textarea id="chatMessage" rows="3" placeholder="Say something..."></textarea>
         <button class="primary" id="chatBtn">Send Chat</button>
+      </div>
+
+      <div class="card">
+        <h2>AI Mode (Ollama)</h2>
+        <div class="row">
+          <button class="primary" id="startAiBtn">Start Ollama</button>
+          <button id="stopAiBtn">Stop Ollama</button>
+        </div>
+        <div class="status">
+          <div class="pill" id="aiStatus">Unknown</div>
+          <div id="aiStatusMessage">Waiting for update...</div>
+        </div>
+        <textarea id="aiPrompt" rows="3" placeholder="Ask the AI to control the bot..."></textarea>
+        <button class="primary" id="aiSendBtn">Send to AI</button>
       </div>
 
       <div class="card" style="grid-column: span 2;">
@@ -221,6 +245,13 @@
         logEl.prepend(p);
       }
 
+      function updatePosition(pos) {
+        if (!pos) return;
+        document.getElementById("posX").textContent = `X: ${pos.x?.toFixed(2) ?? "--"}`;
+        document.getElementById("posY").textContent = `Y: ${pos.y?.toFixed(2) ?? "--"}`;
+        document.getElementById("posZ").textContent = `Z: ${pos.z?.toFixed(2) ?? "--"}`;
+      }
+
       function connect() {
         socket = new WebSocket(wsUrl);
         socket.addEventListener("open", () => {
@@ -244,6 +275,7 @@
           }
           if (data.type === "status") {
             statusEl.textContent = `HP ${data.health ?? "?"} | Food ${data.food ?? "?"}`;
+            updatePosition(data.pos);
           }
           if (data.type === "error") {
             log(data.message ?? "Unknown error", "error");
@@ -252,6 +284,9 @@
           }
           if (data.event === "chat") {
             log(`${data.username}: ${data.message}`, "chat");
+          }
+          if (data.event === "pos") {
+            updatePosition(data.pos);
           }
         });
       }
@@ -295,6 +330,9 @@
           count: Number(document.getElementById("getCount").value || 1)
         });
       });
+      document.getElementById("posRefreshBtn").addEventListener("click", () => {
+        sendCommand({ cmd: "status" });
+      });
       document.getElementById("chatBtn").addEventListener("click", () => {
         sendCommand({
           cmd: "chat",
@@ -337,8 +375,63 @@
         }
       });
 
+      async function refreshAiStatus() {
+        try {
+          const response = await fetch("/api/ai-status");
+          const data = await response.json();
+          const status = document.getElementById("aiStatus");
+          const msg = document.getElementById("aiStatusMessage");
+          status.textContent = data.running ? "Running" : "Stopped";
+          msg.textContent = data.running ? "Ollama is active" : "Ollama is not running";
+        } catch (err) {
+          log(`Failed to fetch AI status: ${err}`, "error");
+        }
+      }
+
+      document.getElementById("startAiBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/ai-start", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Ollama start requested");
+          refreshAiStatus();
+        } catch (err) {
+          log(`Failed to start Ollama: ${err}`, "error");
+        }
+      });
+
+      document.getElementById("stopAiBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/ai-stop", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Ollama stop requested");
+          refreshAiStatus();
+        } catch (err) {
+          log(`Failed to stop Ollama: ${err}`, "error");
+        }
+      });
+
+      document.getElementById("aiSendBtn").addEventListener("click", async () => {
+        try {
+          const prompt = document.getElementById("aiPrompt").value;
+          const response = await fetch("/api/ai-chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: prompt })
+          });
+          const data = await response.json();
+          if (data.error) {
+            log(data.error, "error");
+          } else {
+            log(data.response ?? "AI responded");
+          }
+        } catch (err) {
+          log(`Failed to send AI prompt: ${err}`, "error");
+        }
+      });
+
       connect();
       refreshBotProcessStatus();
+      refreshAiStatus();
     </script>
   </body>
 </html>
