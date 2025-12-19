@@ -13,10 +13,13 @@ from flask import Flask, jsonify, render_template, request
 
 def create_app() -> Flask:
     app = Flask(__name__)
+    repo_root = Path(__file__).resolve().parents[1]
     app.config["WS_URL"] = os.environ.get("WS_URL", "ws://localhost:8765")
     app.config["OLLAMA_URL"] = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
     app.config["OLLAMA_MODEL"] = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
-    repo_root = Path(__file__).resolve().parents[1]
+    app.config["AI_MEMORY_PATH"] = os.environ.get(
+        "AI_MEMORY_PATH", str(repo_root / "webui" / "ai_memory.json")
+    )
     bot_process: subprocess.Popen | None = None
     ollama_process: subprocess.Popen | None = None
 
@@ -44,6 +47,20 @@ def create_app() -> Flask:
             if not lines:
                 raise
             return json.loads(lines[-1])
+
+    def load_ai_memory() -> list[dict]:
+        path = Path(app.config["AI_MEMORY_PATH"])
+        if not path.exists():
+            return []
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            return []
+
+    def save_ai_memory(messages: list[dict]) -> None:
+        path = Path(app.config["AI_MEMORY_PATH"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(messages[-50:], indent=2), encoding="utf-8")
 
     def get_tool_schema() -> list[dict]:
         return [
@@ -313,14 +330,21 @@ def create_app() -> Flask:
             "You are an AI Minecraft assistant. Use tools when needed to control the bot. "
             "Prefer tool calls for actions like movement, getting items, status, or chat."
         )
+        memory = load_ai_memory()
         messages = [
             {"role": "system", "content": system},
+            *memory,
             {"role": "user", "content": prompt}
         ]
         tools = get_tool_schema()
         resp = requests.post(
             f"{app.config['OLLAMA_URL']}/api/chat",
-            json={"model": app.config["OLLAMA_MODEL"], "messages": messages, "tools": tools}
+            json={
+                "model": app.config["OLLAMA_MODEL"],
+                "messages": messages,
+                "tools": tools,
+                "stream": False
+            }
         )
         resp.raise_for_status()
         data = parse_ollama_json(resp)
@@ -333,6 +357,11 @@ def create_app() -> Flask:
                 fn = call.get("function", {})
                 name = fn.get("name")
                 args = fn.get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
                 tool_results.append({
                     "role": "tool",
                     "name": name,
@@ -341,12 +370,28 @@ def create_app() -> Flask:
             followup_messages = messages + [message] + tool_results
             followup = requests.post(
                 f"{app.config['OLLAMA_URL']}/api/chat",
-                json={"model": app.config["OLLAMA_MODEL"], "messages": followup_messages}
+                json={
+                    "model": app.config["OLLAMA_MODEL"],
+                    "messages": followup_messages,
+                    "stream": False
+                }
             )
             followup.raise_for_status()
             final_message = parse_ollama_json(followup).get("message", {})
+            new_memory = memory + [
+                {"role": "user", "content": prompt},
+                message,
+                *tool_results,
+                {"role": "assistant", "content": final_message.get("content", "")}
+            ]
+            save_ai_memory(new_memory)
             return jsonify({"response": final_message.get("content", ""), "tools_used": tool_calls})
 
+        new_memory = memory + [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": message.get("content", "")}
+        ]
+        save_ai_memory(new_memory)
         return jsonify({"response": message.get("content", ""), "tools_used": []})
 
     return app
