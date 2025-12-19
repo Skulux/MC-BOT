@@ -193,6 +193,22 @@ def create_app() -> Flask:
             {
                 "type": "function",
                 "function": {
+                    "name": "find_blocks",
+                    "description": "Find nearby blocks by name (e.g. oak_log).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "radius": {"type": "number", "default": 16},
+                            "count": {"type": "number", "default": 10}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "chat",
                     "description": "Send a chat message in-game.",
                     "parameters": {
@@ -250,6 +266,13 @@ def create_app() -> Flask:
             return send_ws_command({"cmd": "stop"})
         if name == "scan_blocks":
             return send_ws_command({"cmd": "scan_blocks", "radius": args.get("radius", 6)})
+        if name == "find_blocks":
+            return send_ws_command({
+                "cmd": "find_blocks",
+                "name": args["name"],
+                "radius": args.get("radius", 16),
+                "count": args.get("count", 10)
+            })
         if name == "chat":
             return send_ws_command({"cmd": "chat", "text": args["text"]})
         if name == "inventory":
@@ -325,6 +348,7 @@ def create_app() -> Flask:
         system = (
             "You are an AI Minecraft assistant. Use tools when needed to control the bot. "
             "Prefer tool calls for actions like movement, mining, placing, status, or chat. "
+            "Use scan_blocks or find_blocks before digging to avoid punching air. "
             "Do not claim actions are completed without tool results that confirm success."
         )
         memory = load_ai_memory()

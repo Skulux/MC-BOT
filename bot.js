@@ -738,6 +738,28 @@ wss.on("connection", (ws) => {
         return replyOk({ type: "scan_blocks", radius, blocks: results });
       }
 
+      if (cmd === "find_blocks") {
+        const name = String(msg.name ?? "");
+        const radius = Number(msg.radius ?? 16);
+        const count = Number(msg.count ?? 10);
+        if (!name) return replyErr("Missing block name");
+        if (!Number.isFinite(radius) || radius <= 0) return replyErr("Invalid radius");
+        if (!Number.isFinite(count) || count <= 0) return replyErr("Invalid count");
+        const matches = bot.findBlocks({
+          matching: (b) => b?.name === name,
+          maxDistance: radius,
+          count
+        });
+        const results = matches
+          .map((pos) => bot.blockAt(pos))
+          .filter(Boolean)
+          .map((block) => ({
+            name: block.name,
+            position: { x: block.position.x, y: block.position.y, z: block.position.z }
+          }));
+        return replyOk({ type: "find_blocks", name, radius, blocks: results });
+      }
+
       if (cmd === "toss") {
         const name = String(msg.name ?? "");
         const count = Number(msg.count ?? 1);
