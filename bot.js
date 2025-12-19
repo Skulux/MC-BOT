@@ -720,6 +720,24 @@ wss.on("connection", (ws) => {
         return replyOk({ type: "inventory", items });
       }
 
+      if (cmd === "scan_blocks") {
+        const radius = Number(msg.radius ?? 6);
+        if (!Number.isFinite(radius) || radius <= 0) return replyErr("Invalid radius");
+        const blocks = bot.findBlocks({
+          matching: () => true,
+          maxDistance: radius,
+          count: 100
+        });
+        const results = blocks
+          .map((pos) => bot.blockAt(pos))
+          .filter(Boolean)
+          .map((block) => ({
+            name: block.name,
+            position: { x: block.position.x, y: block.position.y, z: block.position.z }
+          }));
+        return replyOk({ type: "scan_blocks", radius, blocks: results });
+      }
+
       if (cmd === "toss") {
         const name = String(msg.name ?? "");
         const count = Number(msg.count ?? 1);

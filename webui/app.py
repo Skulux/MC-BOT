@@ -182,15 +182,11 @@ def create_app() -> Flask:
             {
                 "type": "function",
                 "function": {
-                    "name": "get_item",
-                    "description": "Get or craft an item, including prerequisites.",
+                    "name": "scan_blocks",
+                    "description": "List nearby blocks around the bot.",
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "count": {"type": "number", "default": 1}
-                        },
-                        "required": ["name"]
+                        "properties": {"radius": {"type": "number", "default": 6}}
                     }
                 }
             },
@@ -252,8 +248,8 @@ def create_app() -> Flask:
             return send_ws_command({"cmd": "use", "pos": {"x": args["x"], "y": args["y"], "z": args["z"]}})
         if name == "stop":
             return send_ws_command({"cmd": "stop"})
-        if name == "get_item":
-            return send_ws_command({"cmd": "get", "name": args["name"], "count": args.get("count", 1)})
+        if name == "scan_blocks":
+            return send_ws_command({"cmd": "scan_blocks", "radius": args.get("radius", 6)})
         if name == "chat":
             return send_ws_command({"cmd": "chat", "text": args["text"]})
         if name == "inventory":
@@ -328,7 +324,8 @@ def create_app() -> Flask:
 
         system = (
             "You are an AI Minecraft assistant. Use tools when needed to control the bot. "
-            "Prefer tool calls for actions like movement, getting items, status, or chat."
+            "Prefer tool calls for actions like movement, mining, placing, status, or chat. "
+            "Do not claim actions are completed without tool results that confirm success."
         )
         memory = load_ai_memory()
         messages = [
