@@ -295,14 +295,24 @@ def create_app() -> Flask:
         nonlocal bot_process
         if bot_process is not None and bot_process.poll() is None:
             return jsonify({"running": True, "message": "bot already running"})
+        bot_path = repo_root / "bot.js"
+        if not bot_path.exists():
+            return jsonify({"running": False, "message": f"bot.js not found at {bot_path}"}), 500
         bot_process = subprocess.Popen(
-            ["node", "bot.js"],
+            ["node", str(bot_path)],
             cwd=repo_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True
         )
-        return jsonify({"running": True, "message": "bot started"})
+        try:
+            output = bot_process.stdout.readline().strip() if bot_process.stdout else ""
+        except Exception:
+            output = ""
+        if bot_process.poll() is not None:
+            message = output or "bot.js exited immediately"
+            return jsonify({"running": False, "message": message}), 500
+        return jsonify({"running": True, "message": "bot started", "output": output})
 
     @app.post("/api/stop-bot")
     def stop_bot():
