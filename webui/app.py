@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -349,7 +350,8 @@ def create_app() -> Flask:
             "You are an AI Minecraft assistant. Use tools when needed to control the bot. "
             "Prefer tool calls for actions like movement, mining, placing, status, or chat. "
             "Use scan_blocks or find_blocks before digging to avoid punching air. "
-            "Do not claim actions are completed without tool results that confirm success."
+            "Do not claim actions are completed without tool results that confirm success. "
+            "You must call tools for actions instead of suggesting slash commands."
         )
         memory = load_ai_memory()
         messages = [
@@ -372,6 +374,39 @@ def create_app() -> Flask:
         message = data.get("message", {})
 
         tool_calls = message.get("tool_calls") or []
+        if not tool_calls and isinstance(message.get("content"), str):
+            content = message["content"]
+            find_match = re.search(r"/find\s+([a-zA-Z_]+)(?:\s+count\s+(\d+))?", content)
+            scan_match = re.search(r"/scan(?:\s+(\d+))?", content)
+            dig_match = re.search(r"/dig\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)", content)
+            if find_match:
+                tool_calls = [{
+                    "function": {
+                        "name": "find_blocks",
+                        "arguments": {
+                            "name": find_match.group(1),
+                            "count": int(find_match.group(2) or 10)
+                        }
+                    }
+                }]
+            elif scan_match:
+                tool_calls = [{
+                    "function": {
+                        "name": "scan_blocks",
+                        "arguments": {"radius": int(scan_match.group(1) or 6)}
+                    }
+                }]
+            elif dig_match:
+                tool_calls = [{
+                    "function": {
+                        "name": "dig_block",
+                        "arguments": {
+                            "x": int(dig_match.group(1)),
+                            "y": int(dig_match.group(2)),
+                            "z": int(dig_match.group(3))
+                        }
+                    }
+                }]
         if tool_calls:
             tool_results = []
             for call in tool_calls:
