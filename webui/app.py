@@ -36,6 +36,15 @@ def create_app() -> Flask:
         except RuntimeError:
             return asyncio.new_event_loop().run_until_complete(_ws_command(payload))
 
+    def parse_ollama_json(resp: requests.Response) -> dict:
+        try:
+            return resp.json()
+        except (ValueError, json.JSONDecodeError, requests.exceptions.JSONDecodeError):
+            lines = [line for line in resp.text.splitlines() if line.strip()]
+            if not lines:
+                raise
+            return json.loads(lines[-1])
+
     def get_tool_schema() -> list[dict]:
         return [
             {
@@ -43,6 +52,14 @@ def create_app() -> Flask:
                 "function": {
                     "name": "get_status",
                     "description": "Get current bot status including position, health, and food.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_position",
+                    "description": "Get the current bot position (XYZ).",
                     "parameters": {"type": "object", "properties": {}}
                 }
             },
@@ -82,6 +99,56 @@ def create_app() -> Flask:
                             "y": {"type": "number"},
                             "z": {"type": "number"},
                             "range": {"type": "number", "default": 1}
+                        },
+                        "required": ["x", "y", "z"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "dig_block",
+                    "description": "Dig a block at a position.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        },
+                        "required": ["x", "y", "z"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "place_block",
+                    "description": "Place a block on the given face of a reference block.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "ref_x": {"type": "number"},
+                            "ref_y": {"type": "number"},
+                            "ref_z": {"type": "number"},
+                            "face": {"type": "number"},
+                            "item_name": {"type": "string"}
+                        },
+                        "required": ["ref_x", "ref_y", "ref_z", "face", "item_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "use_block",
+                    "description": "Use/activate a block (e.g. crafting table or furnace).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
                         },
                         "required": ["x", "y", "z"]
                     }
@@ -135,6 +202,8 @@ def create_app() -> Flask:
     def run_tool_call(name: str, args: dict) -> dict:
         if name == "get_status":
             return send_ws_command({"cmd": "status"})
+        if name == "get_position":
+            return send_ws_command({"cmd": "status"})
         if name == "get_base":
             return send_ws_command({"cmd": "get_base"})
         if name == "go_home":
@@ -153,6 +222,17 @@ def create_app() -> Flask:
                 "pos": {"x": args["x"], "y": args["y"], "z": args["z"]},
                 "range": args.get("range", 1)
             })
+        if name == "dig_block":
+            return send_ws_command({"cmd": "dig", "pos": {"x": args["x"], "y": args["y"], "z": args["z"]}})
+        if name == "place_block":
+            return send_ws_command({
+                "cmd": "place",
+                "reference": {"x": args["ref_x"], "y": args["ref_y"], "z": args["ref_z"]},
+                "face": args["face"],
+                "itemName": args["item_name"]
+            })
+        if name == "use_block":
+            return send_ws_command({"cmd": "use", "pos": {"x": args["x"], "y": args["y"], "z": args["z"]}})
         if name == "stop":
             return send_ws_command({"cmd": "stop"})
         if name == "get_item":
@@ -243,7 +323,7 @@ def create_app() -> Flask:
             json={"model": app.config["OLLAMA_MODEL"], "messages": messages, "tools": tools}
         )
         resp.raise_for_status()
-        data = resp.json()
+        data = parse_ollama_json(resp)
         message = data.get("message", {})
 
         tool_calls = message.get("tool_calls") or []
@@ -264,7 +344,7 @@ def create_app() -> Flask:
                 json={"model": app.config["OLLAMA_MODEL"], "messages": followup_messages}
             )
             followup.raise_for_status()
-            final_message = followup.json().get("message", {})
+            final_message = parse_ollama_json(followup).get("message", {})
             return jsonify({"response": final_message.get("content", ""), "tools_used": tool_calls})
 
         return jsonify({"response": message.get("content", ""), "tools_used": []})

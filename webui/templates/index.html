@@ -216,6 +216,7 @@
         </div>
         <textarea id="aiPrompt" rows="3" placeholder="Ask the AI to control the bot..."></textarea>
         <button class="primary" id="aiSendBtn">Send to AI</button>
+        <div class="log" id="aiResponse">AI response will appear here.</div>
       </div>
 
       <div class="card" style="grid-column: span 2;">
@@ -250,6 +251,11 @@
         document.getElementById("posX").textContent = `X: ${pos.x?.toFixed(2) ?? "--"}`;
         document.getElementById("posY").textContent = `Y: ${pos.y?.toFixed(2) ?? "--"}`;
         document.getElementById("posZ").textContent = `Z: ${pos.z?.toFixed(2) ?? "--"}`;
+      }
+
+      function updateAiResponse(text) {
+        const aiResponse = document.getElementById("aiResponse");
+        aiResponse.textContent = text || "No response yet.";
       }
 
       function connect() {
@@ -421,11 +427,14 @@
           const data = await response.json();
           if (data.error) {
             log(data.error, "error");
+            updateAiResponse(data.error);
           } else {
             log(data.response ?? "AI responded");
+            updateAiResponse(data.response ?? "");
           }
         } catch (err) {
           log(`Failed to send AI prompt: ${err}`, "error");
+          updateAiResponse(String(err));
         }
       });
 

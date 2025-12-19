@@ -658,6 +658,15 @@ wss.on("connection", (ws) => {
         return replyOk({ type: "dig", block: block.name });
       }
 
+      if (cmd === "use") {
+        const v = safeVec3(msg.pos);
+        if (!v) return replyErr("Invalid pos");
+        const block = bot.blockAt(v);
+        if (!block) return replyErr("No block at pos");
+        await bot.activateBlock(block);
+        return replyOk({ type: "use", block: block.name });
+      }
+
       if (cmd === "collect") {
         const name = String(msg.name ?? "");
         const count = Number(msg.count ?? 1);
