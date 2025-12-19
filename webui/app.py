@@ -447,9 +447,49 @@ def create_app() -> Flask:
                 })
                 current_messages.append(tool_results[-1])
 
+        intent_keywords = ("get ", "mine ", "chop ", "collect ", "gather ")
+        wants_action = any(word in prompt.lower() for word in intent_keywords)
+        dig_used = any(call.get("function", {}).get("name") == "dig_block" for call in tool_calls_used)
+        if wants_action and not dig_used:
+            for result in reversed(tool_results):
+                if result.get("name") == "find_blocks":
+                    try:
+                        find_data = json.loads(result.get("content", "{}"))
+                    except json.JSONDecodeError:
+                        find_data = {}
+                    blocks = find_data.get("blocks") or []
+                    if blocks:
+                        count_match = re.search(r"(\d+)", prompt)
+                        max_count = int(count_match.group(1)) if count_match else 1
+                        for block in blocks[:max_count]:
+                            pos = block.get("position", {})
+                            dig_result = run_tool_call("dig_block", pos)
+                            tool_results.append({
+                                "role": "tool",
+                                "name": "dig_block",
+                                "content": json.dumps(dig_result)
+                            })
+                            tool_calls_used.append({
+                                "function": {"name": "dig_block", "arguments": pos}
+                            })
+                            current_messages.append(tool_results[-1])
+                        break
+
+        followup_resp = requests.post(
+            f"{app.config['OLLAMA_URL']}/api/chat",
+            json={
+                "model": app.config["OLLAMA_MODEL"],
+                "messages": current_messages,
+                "stream": False
+            }
+        )
+        followup_resp.raise_for_status()
+        final_message = parse_ollama_json(followup_resp).get("message", final_message)
+
         new_memory = memory + [
             {"role": "user", "content": prompt},
-            *current_messages[1:]
+            *current_messages[1:],
+            {"role": "assistant", "content": final_message.get("content", "")}
         ]
         save_ai_memory(new_memory)
         return jsonify({"response": final_message.get("content", ""), "tools_used": tool_calls_used})
