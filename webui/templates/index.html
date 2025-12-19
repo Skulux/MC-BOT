@@ -157,6 +157,18 @@
       </div>
 
       <div class="card">
+        <h2>Bot Process</h2>
+        <div class="row">
+          <button class="primary" id="startBotBtn">Start bot.js</button>
+          <button id="stopBotBtn">Stop bot.js</button>
+        </div>
+        <div class="status">
+          <div class="pill" id="botProcessStatus">Unknown</div>
+          <div id="botProcessMessage">Waiting for update...</div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Navigation</h2>
         <div class="row">
           <input id="gotoX" placeholder="X" />
@@ -290,7 +302,43 @@
         });
       });
 
+      async function refreshBotProcessStatus() {
+        try {
+          const response = await fetch("/api/bot-status");
+          const data = await response.json();
+          const statusEl = document.getElementById("botProcessStatus");
+          const msgEl = document.getElementById("botProcessMessage");
+          statusEl.textContent = data.running ? "Running" : "Stopped";
+          msgEl.textContent = data.running ? "bot.js is active" : "bot.js is not running";
+        } catch (err) {
+          log(`Failed to fetch bot status: ${err}`, "error");
+        }
+      }
+
+      document.getElementById("startBotBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/start-bot", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Bot start requested");
+          refreshBotProcessStatus();
+        } catch (err) {
+          log(`Failed to start bot: ${err}`, "error");
+        }
+      });
+
+      document.getElementById("stopBotBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/stop-bot", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Bot stop requested");
+          refreshBotProcessStatus();
+        } catch (err) {
+          log(`Failed to stop bot: ${err}`, "error");
+        }
+      });
+
       connect();
+      refreshBotProcessStatus();
     </script>
   </body>
 </html>

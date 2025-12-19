@@ -211,11 +211,22 @@ async function ensureCraftingTable() {
   return bot.blockAt(reference.position.offset(0, 1, 0));
 }
 
-async function ensureBasicPickaxe() {
-  const pickaxe = bot.inventory.items().find((i) => i.name.endsWith("_pickaxe"));
-  if (pickaxe) return pickaxe.name;
+const pickaxeRank = new Map([
+  ["wooden_pickaxe", 1],
+  ["stone_pickaxe", 2],
+  ["iron_pickaxe", 3],
+  ["diamond_pickaxe", 4],
+  ["netherite_pickaxe", 5]
+]);
 
-  const logNames = [
+function getBestPickaxeName() {
+  const pickaxes = bot.inventory.items().filter((i) => pickaxeRank.has(i.name));
+  pickaxes.sort((a, b) => pickaxeRank.get(b.name) - pickaxeRank.get(a.name));
+  return pickaxes[0]?.name ?? null;
+}
+
+function getLogBlockNames() {
+  return [
     "oak_log",
     "spruce_log",
     "birch_log",
@@ -223,28 +234,240 @@ async function ensureBasicPickaxe() {
     "acacia_log",
     "dark_oak_log",
     "mangrove_log",
-    "cherry_log"
+    "cherry_log",
+    "crimson_stem",
+    "warped_stem"
   ];
-  if (getPlankCount() < 5) {
-    if (!bot.collectBlock?.collect) throw new Error("collectBlock plugin not available");
-    const logBlocks = bot.findBlocks({
-      matching: (b) => logNames.includes(b?.name),
-      maxDistance: 32,
-      count: 2
-    });
-    if (!logBlocks.length) throw new Error("No logs found nearby to craft a pickaxe");
-    const blocks = logBlocks.map((pos) => bot.blockAt(pos)).filter(Boolean);
-    await bot.collectBlock.collect(blocks.slice(0, 2));
-    const logItem = getLogItems()[0];
-    if (!logItem) throw new Error("No logs available to craft planks");
-    await craftItem(logToPlankName(logItem.name), 8);
-  }
-  if (getInventoryCount("stick") < 2) {
-    await craftItem("stick", 2);
-  }
+}
+
+async function ensureLogs(minCount = 1) {
+  if (getLogItems().reduce((sum, i) => sum + i.count, 0) >= minCount) return;
+  if (!bot.collectBlock?.collect) throw new Error("collectBlock plugin not available");
+  const logBlocks = bot.findBlocks({
+    matching: (b) => getLogBlockNames().includes(b?.name),
+    maxDistance: 32,
+    count: minCount
+  });
+  if (!logBlocks.length) throw new Error("No logs found nearby");
+  const blocks = logBlocks.map((pos) => bot.blockAt(pos)).filter(Boolean);
+  await bot.collectBlock.collect(blocks.slice(0, minCount));
+}
+
+async function ensurePlanks(minCount = 4) {
+  if (getPlankCount() >= minCount) return;
+  await ensureLogs(1);
+  const logItem = getLogItems()[0];
+  if (!logItem) throw new Error("No logs available to craft planks");
+  await craftItem(logToPlankName(logItem.name), Math.max(4, minCount));
+}
+
+async function ensureSticks(minCount = 2) {
+  if (getInventoryCount("stick") >= minCount) return;
+  await ensurePlanks(2);
+  await craftItem("stick", minCount);
+}
+
+async function ensureCraftingTablePlaced() {
   const tableBlock = await ensureCraftingTable();
-  await craftItem("wooden_pickaxe", 1, tableBlock);
-  return "wooden_pickaxe";
+  if (!tableBlock) throw new Error("Unable to place crafting table");
+  return tableBlock;
+}
+
+async function ensurePickaxeTier(targetName) {
+  const targetRank = pickaxeRank.get(targetName);
+  if (!targetRank) throw new Error(`Unknown pickaxe tier: ${targetName}`);
+  const best = getBestPickaxeName();
+  if (best && pickaxeRank.get(best) >= targetRank) return best;
+
+  const tableBlock = await ensureCraftingTablePlaced();
+
+  if (targetName === "wooden_pickaxe") {
+    await ensurePlanks(3);
+    await ensureSticks(2);
+    await craftItem("wooden_pickaxe", 1, tableBlock);
+    return "wooden_pickaxe";
+  }
+
+  if (targetName === "stone_pickaxe") {
+    await ensurePickaxeTier("wooden_pickaxe");
+    await ensureItem("cobblestone", 3);
+    await ensureSticks(2);
+    await craftItem("stone_pickaxe", 1, tableBlock);
+    return "stone_pickaxe";
+  }
+
+  if (targetName === "iron_pickaxe") {
+    await ensurePickaxeTier("stone_pickaxe");
+    await ensureItem("iron_ingot", 3);
+    await ensureSticks(2);
+    await craftItem("iron_pickaxe", 1, tableBlock);
+    return "iron_pickaxe";
+  }
+
+  if (targetName === "diamond_pickaxe") {
+    await ensurePickaxeTier("iron_pickaxe");
+    await ensureItem("diamond", 3);
+    await ensureSticks(2);
+    await craftItem("diamond_pickaxe", 1, tableBlock);
+    return "diamond_pickaxe";
+  }
+
+  throw new Error(`Unsupported pickaxe tier: ${targetName}`);
+}
+
+async function ensureToolByName(toolName) {
+  if (toolName.endsWith("_pickaxe")) {
+    return ensurePickaxeTier(toolName);
+  }
+  throw new Error(`Unsupported required tool: ${toolName}`);
+}
+
+async function ensureFuelItem() {
+  const fuelPriority = ["coal", "charcoal", "planks", "log", "stick"];
+  const items = bot.inventory.items();
+  const fuelItem =
+    items.find((i) => i.name === "coal") ||
+    items.find((i) => i.name === "charcoal") ||
+    items.find((i) => i.name.endsWith("_planks")) ||
+    items.find((i) => i.name.endsWith("_log") || i.name.endsWith("_stem")) ||
+    items.find((i) => i.name === "stick");
+  if (fuelItem) return fuelItem.name;
+  await ensurePlanks(2);
+  return getPlankItems()[0]?.name ?? "oak_planks";
+}
+
+async function ensureFurnacePlaced() {
+  if (getInventoryCount("furnace") < 1) {
+    await ensureItem("cobblestone", 8);
+    const tableBlock = await ensureCraftingTablePlaced();
+    await craftItem("furnace", 1, tableBlock);
+  }
+  const reference = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+  if (!reference) throw new Error("No block to place furnace on");
+  await equipByName("furnace");
+  await bot.placeBlock(reference, new Vec3(0, 1, 0));
+  return bot.blockAt(reference.position.offset(0, 1, 0));
+}
+
+async function smeltItem(outputName, inputName, count = 1) {
+  const furnaceBlock = await ensureFurnacePlaced();
+  const furnace = await bot.openFurnace(furnaceBlock);
+  try {
+    const fuelName = await ensureFuelItem();
+    const fuelItem = bot.inventory.items().find((i) => i.name === fuelName);
+    const inputItem = bot.inventory.items().find((i) => i.name === inputName);
+    if (!fuelItem) throw new Error(`Missing fuel item: ${fuelName}`);
+    if (!inputItem) throw new Error(`Missing smelt input: ${inputName}`);
+    await furnace.putFuel(fuelItem.type, null, 1);
+    await furnace.putInput(inputItem.type, null, count);
+    await furnace.takeOutput();
+  } finally {
+    furnace.close();
+  }
+  if (getInventoryCount(outputName) < count) {
+    throw new Error(`Failed to smelt ${outputName}`);
+  }
+}
+
+async function ensureItem(name, count = 1) {
+  if (getInventoryCount(name) >= count) return;
+
+  const mcData = await getMcData();
+
+  async function collectBlockByName(blockName, blockCount) {
+    if (!bot.collectBlock?.collect) throw new Error("collectBlock plugin not available");
+    const matches = bot.findBlocks({
+      matching: (b) => b?.name === blockName,
+      maxDistance: 64,
+      count: blockCount
+    });
+    if (!matches.length) throw new Error(`No blocks found: ${blockName}`);
+    const sample = bot.blockAt(matches[0]);
+    if (sample && !bot.canDigBlock(sample)) {
+      const toolIds = Object.keys(sample.harvestTools ?? {}).map((id) => Number(id));
+      const toolNames = toolIds
+        .map((id) => mcData.items?.[id]?.name)
+        .filter(Boolean);
+      const pickaxeName = toolNames.find((tool) => tool.endsWith("_pickaxe"));
+      if (pickaxeName) {
+        await ensureToolByName(pickaxeName);
+      } else if (!toolNames.length) {
+        throw new Error(`Cannot dig ${blockName} with current tools`);
+      }
+    }
+    const blocks = matches.map((pos) => bot.blockAt(pos)).filter(Boolean);
+    await bot.collectBlock.collect(blocks.slice(0, blockCount));
+  }
+
+  if (name.endsWith("_planks")) {
+    await ensurePlanks(count);
+    return;
+  }
+  if (name === "stick") {
+    await ensureSticks(count);
+    return;
+  }
+  if (name.endsWith("_pickaxe")) {
+    await ensurePickaxeTier(name);
+    return;
+  }
+
+  if (mcData.blocksByName?.[name]) {
+    await collectBlockByName(name, count);
+    return;
+  }
+
+  const oreBlockName =
+    mcData.blocksByName?.[`${name}_ore`]
+      ? `${name}_ore`
+      : name.startsWith("raw_") && mcData.blocksByName?.[`${name.replace("raw_", "")}_ore`]
+        ? `${name.replace("raw_", "")}_ore`
+        : null;
+  if (oreBlockName) {
+    await collectBlockByName(oreBlockName, count);
+    if (getInventoryCount(name) >= count) return;
+    throw new Error(`Collected ${oreBlockName} but still missing ${name}`);
+  }
+
+  const smeltables = {
+    iron_ingot: ["raw_iron", "iron_ore"],
+    gold_ingot: ["raw_gold", "gold_ore"],
+    copper_ingot: ["raw_copper", "copper_ore"],
+    stone: ["cobblestone"],
+    glass: ["sand"],
+    charcoal: ["oak_log"]
+  };
+  if (smeltables[name]) {
+    const inputs = smeltables[name];
+    for (const input of inputs) {
+      if (getInventoryCount(input) >= count || mcData.blocksByName?.[input]) {
+        await ensureItem(input, count);
+        await smeltItem(name, input, count);
+        return;
+      }
+    }
+  }
+
+  const item = mcData.itemsByName?.[name];
+  if (!item) throw new Error(`Unknown item: ${name}`);
+  const recipes = bot.recipesFor(item.id, null, 1, null);
+  if (!recipes.length) throw new Error(`No recipe available for ${name}`);
+  const recipe = recipes[0];
+  const ingredients = recipe.ingredients ?? [];
+  const ingredientCounts = ingredients.reduce((acc, id) => {
+    if (!id) return acc;
+    acc.set(id, (acc.get(id) ?? 0) + 1);
+    return acc;
+  }, new Map());
+
+  for (const [id, needed] of ingredientCounts.entries()) {
+    const ingredientName = mcData.items?.[id]?.name;
+    if (!ingredientName) continue;
+    await ensureItem(ingredientName, needed);
+  }
+
+  const tableBlock = recipe.requiresTable ? await ensureCraftingTablePlaced() : null;
+  await craftItem(name, count, tableBlock);
 }
 
 // ---- Movement control (simple WASD-like) ----
@@ -410,50 +633,8 @@ wss.on("connection", (ws) => {
         const count = Number(msg.count ?? 1);
         if (!name) return replyErr("Missing item name");
         if (!Number.isFinite(count) || count <= 0) return replyErr("Invalid count");
-
-        if (getInventoryCount(name) >= count) {
-          return replyOk({ type: "get", name, count, status: "already_have" });
-        }
-
-        const mcData = await getMcData();
-        const blockName =
-          mcData.blocksByName?.[name] ? name : mcData.blocksByName?.[`${name}_ore`] ? `${name}_ore` : null;
-        if (!blockName) {
-          return replyErr(`No matching block found for ${name}`);
-        }
-
-        if (!bot.collectBlock?.collect) {
-          return replyErr("collectBlock plugin not available on bot");
-        }
-
-        const matchPos = bot.findBlocks({
-          matching: (b) => b?.name === blockName,
-          maxDistance: 64,
-          count
-        });
-        if (!matchPos.length) return replyErr(`No blocks found: ${blockName}`);
-
-        const sample = bot.blockAt(matchPos[0]);
-        if (sample && !bot.canDigBlock(sample)) {
-          const mcDataSample = await getMcData();
-          const toolIds = Object.keys(sample.harvestTools ?? {}).map((id) => Number(id));
-          const toolNames = toolIds
-            .map((id) => mcDataSample.items?.[id]?.name)
-            .filter(Boolean);
-          if (!toolNames.length) return replyErr(`Cannot dig ${blockName} with current tools`);
-          const hasTool = toolNames.some((toolName) => getInventoryCount(toolName) > 0);
-          if (!hasTool) {
-            if (toolNames.includes("wooden_pickaxe")) {
-              await ensureBasicPickaxe();
-            } else {
-              return replyErr(`Required tool missing: ${toolNames.join(", ")}`);
-            }
-          }
-        }
-
-        const blocks = matchPos.map((pos) => bot.blockAt(pos)).filter(Boolean);
-        await bot.collectBlock.collect(blocks.slice(0, count));
-        return replyOk({ type: "get", name, block: blockName, collected: Math.min(count, blocks.length) });
+        await ensureItem(name, count);
+        return replyOk({ type: "get", name, count, status: "completed" });
       }
 
       if (cmd === "automatic_actions") {
