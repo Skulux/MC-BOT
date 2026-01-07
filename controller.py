@@ -9,6 +9,8 @@ import websockets
 WS_URL = "ws://localhost:8765"
 _id = itertools.count(1)
 
+PROMPT = "> "
+
 HELP_TEXT = """
 Commands:
   help
@@ -18,6 +20,9 @@ Commands:
   goto <x> <y> <z> [range]
   lookat <x> <y> <z>
   stop
+  setbase
+  get <item_name> [count]
+  automatic-actions <on|off>
 
   dig <x> <y> <z>
   collect <block_name> [count] [radius]
@@ -67,7 +72,7 @@ async def receiver(ws):
                 print(f"\n[RESP:{t}] {data}")
 
         # re-print prompt nicely
-        print("> ", end="", flush=True)
+        print(PROMPT, end="", flush=True)
 
 def _to_float(s: str) -> float:
     return float(s.replace(",", "."))
@@ -122,6 +127,24 @@ def parse_command(line: str) -> Optional[Dict[str, Any]]:
 
     if cmd == "stop":
         return {"cmd": "stop"}
+
+    if cmd == "setbase":
+        return {"cmd": "set_base"}
+
+    if cmd == "get":
+        if len(args) < 1:
+            print("Usage: get <item_name> [count]")
+            return None
+        name = args[0]
+        count = _to_int(args[1]) if len(args) >= 2 else 1
+        return {"cmd": "get", "name": name, "count": count}
+
+    if cmd == "automatic-actions":
+        if len(args) != 1 or args[0].lower() not in ("on", "off"):
+            print("Usage: automatic-actions <on|off>")
+            return None
+        enabled = args[0].lower() == "on"
+        return {"cmd": "automatic_actions", "enabled": enabled}
 
     if cmd == "dig":
         if len(args) != 3:
@@ -196,14 +219,12 @@ async def main():
         recv_task = asyncio.create_task(receiver(ws))
 
         print("Connected. Type 'help' for commands.")
-        print("> ", end="", flush=True)
 
         try:
             while True:
-                line = await async_input("")
+                line = await async_input(PROMPT)
                 parsed = parse_command(line)
                 if not parsed:
-                    print("> ", end="", flush=True)
                     continue
 
                 # Timed walk helper
@@ -217,11 +238,9 @@ async def main():
                         "forward": False, "back": False, "left": False, "right": False,
                         "jump": False, "sprint": False, "sneak": False
                     }})
-                    print("> ", end="", flush=True)
                     continue
 
                 await send(ws, parsed)
-                print("> ", end="", flush=True)
 
         except (KeyboardInterrupt, EOFError):
             print("\nExiting...")
