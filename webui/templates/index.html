@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MC Bot Control</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: radial-gradient(circle at top, #202a44, #0d101c 60%);
+        color: #f5f6fa;
+      }
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      header {
+        padding: 24px 32px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 24px;
+        letter-spacing: 0.5px;
+      }
+      .status {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.08);
+        padding: 8px 16px;
+        border-radius: 999px;
+        font-size: 14px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+        padding: 0 32px 32px;
+      }
+      .card {
+        background: rgba(12, 15, 28, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .card h2 {
+        margin: 0;
+        font-size: 18px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .row input,
+      .row select {
+        flex: 1 1 120px;
+      }
+      input,
+      select,
+      button,
+      textarea {
+        background: #1c2238;
+        color: #f5f6fa;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 14px;
+      }
+      button {
+        cursor: pointer;
+        transition: transform 0.1s ease, box-shadow 0.2s ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+      }
+      button.primary {
+        background: linear-gradient(135deg, #5f72ff, #7b3cff);
+        border: none;
+      }
+      button.ghost {
+        background: transparent;
+      }
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.06);
+        padding: 8px 12px;
+        border-radius: 999px;
+      }
+      .log {
+        background: #0b0f1c;
+        border-radius: 12px;
+        padding: 12px;
+        height: 220px;
+        overflow-y: auto;
+        font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+        font-size: 12px;
+      }
+      .log p {
+        margin: 0 0 6px;
+        color: #c4ccff;
+      }
+      .log p span {
+        color: #7d88b5;
+        margin-right: 6px;
+      }
+      footer {
+        padding: 16px 32px 32px;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 12px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>MC Bot Command Center</h1>
+      <div class="status">
+        <div class="pill" id="connectionStatus">Disconnected</div>
+        <div id="botStatus">Awaiting status...</div>
+      </div>
+    </header>
+
+    <section class="grid">
+      <div class="card">
+        <h2>Quick Commands</h2>
+        <div class="row">
+          <button class="primary" id="statusBtn">Refresh Status</button>
+          <button id="stopBtn">Stop</button>
+          <button id="setBaseBtn">Set Base</button>
+        </div>
+        <div class="toggle">
+          <label for="autoActionsToggle">Automatic Actions</label>
+          <select id="autoActionsToggle">
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+          <button id="autoActionsBtn">Apply</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Bot Process</h2>
+        <div class="row">
+          <button class="primary" id="startBotBtn">Start bot.js</button>
+          <button id="stopBotBtn">Stop bot.js</button>
+        </div>
+        <div class="status">
+          <div class="pill" id="botProcessStatus">Unknown</div>
+          <div id="botProcessMessage">Waiting for update...</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Navigation</h2>
+        <div class="row">
+          <input id="gotoX" placeholder="X" />
+          <input id="gotoY" placeholder="Y" />
+          <input id="gotoZ" placeholder="Z" />
+          <input id="gotoRange" placeholder="Range" value="1" />
+        </div>
+        <button class="primary" id="gotoBtn">Go To Position</button>
+      </div>
+
+      <div class="card">
+        <h2>Get Items</h2>
+        <div class="row">
+          <input id="getItem" placeholder="Item name (diamond)" />
+          <input id="getCount" placeholder="Count" value="1" />
+        </div>
+        <button class="primary" id="getBtn">Get Item</button>
+      </div>
+
+      <div class="card">
+        <h2>XYZ Position</h2>
+        <div class="status">
+          <div class="pill" id="posX">X: --</div>
+          <div class="pill" id="posY">Y: --</div>
+          <div class="pill" id="posZ">Z: --</div>
+        </div>
+        <button class="ghost" id="posRefreshBtn">Refresh Position</button>
+      </div>
+
+      <div class="card">
+        <h2>Chat</h2>
+        <textarea id="chatMessage" rows="3" placeholder="Say something..."></textarea>
+        <button class="primary" id="chatBtn">Send Chat</button>
+      </div>
+
+      <div class="card">
+        <h2>AI Mode (Ollama)</h2>
+        <div class="row">
+          <button class="primary" id="startAiBtn">Start Ollama</button>
+          <button id="stopAiBtn">Stop Ollama</button>
+        </div>
+        <div class="status">
+          <div class="pill" id="aiStatus">Unknown</div>
+          <div id="aiStatusMessage">Waiting for update...</div>
+        </div>
+        <textarea id="aiPrompt" rows="3" placeholder="Ask the AI to control the bot..."></textarea>
+        <button class="primary" id="aiSendBtn">Send to AI</button>
+        <div class="log" id="aiResponse">AI response will appear here.</div>
+      </div>
+
+      <div class="card" style="grid-column: span 2;">
+        <h2>Console</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </section>
+
+    <footer>
+      Connected to <strong>{{ ws_url }}</strong> — Web UI powered by Flask.
+    </footer>
+
+    <script>
+      const wsUrl = "{{ ws_url }}";
+      const logEl = document.getElementById("log");
+      const statusEl = document.getElementById("botStatus");
+      const connEl = document.getElementById("connectionStatus");
+      let socket;
+      let nextId = 1;
+
+      function log(message, type = "info") {
+        const p = document.createElement("p");
+        const stamp = document.createElement("span");
+        stamp.textContent = new Date().toLocaleTimeString();
+        p.appendChild(stamp);
+        p.appendChild(document.createTextNode(`[${type}] ${message}`));
+        logEl.prepend(p);
+      }
+
+      function updatePosition(pos) {
+        if (!pos) return;
+        document.getElementById("posX").textContent = `X: ${pos.x?.toFixed(2) ?? "--"}`;
+        document.getElementById("posY").textContent = `Y: ${pos.y?.toFixed(2) ?? "--"}`;
+        document.getElementById("posZ").textContent = `Z: ${pos.z?.toFixed(2) ?? "--"}`;
+      }
+
+      function updateAiResponse(text) {
+        const aiResponse = document.getElementById("aiResponse");
+        aiResponse.textContent = text || "No response yet.";
+      }
+
+      function connect() {
+        socket = new WebSocket(wsUrl);
+        socket.addEventListener("open", () => {
+          connEl.textContent = "Connected";
+          connEl.style.background = "rgba(111, 255, 176, 0.15)";
+          log("WebSocket connected");
+          sendCommand({ cmd: "status" });
+        });
+        socket.addEventListener("close", () => {
+          connEl.textContent = "Disconnected";
+          connEl.style.background = "rgba(255, 111, 111, 0.15)";
+          log("WebSocket disconnected", "warn");
+        });
+        socket.addEventListener("message", (event) => {
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch (err) {
+            log(`Invalid message: ${event.data}`, "error");
+            return;
+          }
+          if (data.type === "status") {
+            statusEl.textContent = `HP ${data.health ?? "?"} | Food ${data.food ?? "?"}`;
+            updatePosition(data.pos);
+          }
+          if (data.type === "error") {
+            log(data.message ?? "Unknown error", "error");
+          } else if (data.type) {
+            log(`${data.type}: ${JSON.stringify(data)}`);
+          }
+          if (data.event === "chat") {
+            log(`${data.username}: ${data.message}`, "chat");
+          }
+          if (data.event === "pos") {
+            updatePosition(data.pos);
+          }
+        });
+      }
+
+      function sendCommand(payload) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          log("WebSocket not connected", "error");
+          return;
+        }
+        socket.send(JSON.stringify({ id: nextId++, ...payload }));
+      }
+
+      document.getElementById("statusBtn").addEventListener("click", () => {
+        sendCommand({ cmd: "status" });
+      });
+      document.getElementById("stopBtn").addEventListener("click", () => {
+        sendCommand({ cmd: "stop" });
+      });
+      document.getElementById("setBaseBtn").addEventListener("click", () => {
+        sendCommand({ cmd: "set_base" });
+      });
+      document.getElementById("autoActionsBtn").addEventListener("click", () => {
+        const enabled = document.getElementById("autoActionsToggle").value === "on";
+        sendCommand({ cmd: "automatic_actions", enabled });
+      });
+      document.getElementById("gotoBtn").addEventListener("click", () => {
+        sendCommand({
+          cmd: "goto",
+          pos: {
+            x: Number(document.getElementById("gotoX").value),
+            y: Number(document.getElementById("gotoY").value),
+            z: Number(document.getElementById("gotoZ").value)
+          },
+          range: Number(document.getElementById("gotoRange").value || 1)
+        });
+      });
+      document.getElementById("getBtn").addEventListener("click", () => {
+        sendCommand({
+          cmd: "get",
+          name: document.getElementById("getItem").value,
+          count: Number(document.getElementById("getCount").value || 1)
+        });
+      });
+      document.getElementById("posRefreshBtn").addEventListener("click", () => {
+        sendCommand({ cmd: "status" });
+      });
+      document.getElementById("chatBtn").addEventListener("click", () => {
+        sendCommand({
+          cmd: "chat",
+          text: document.getElementById("chatMessage").value
+        });
+      });
+
+      async function refreshBotProcessStatus() {
+        try {
+          const response = await fetch("/api/bot-status");
+          const data = await response.json();
+          const statusEl = document.getElementById("botProcessStatus");
+          const msgEl = document.getElementById("botProcessMessage");
+          statusEl.textContent = data.running ? "Running" : "Stopped";
+          msgEl.textContent = data.running ? "bot.js is active" : "bot.js is not running";
+        } catch (err) {
+          log(`Failed to fetch bot status: ${err}`, "error");
+        }
+      }
+
+      document.getElementById("startBotBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/start-bot", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Bot start requested");
+          refreshBotProcessStatus();
+        } catch (err) {
+          log(`Failed to start bot: ${err}`, "error");
+        }
+      });
+
+      document.getElementById("stopBotBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/stop-bot", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Bot stop requested");
+          refreshBotProcessStatus();
+        } catch (err) {
+          log(`Failed to stop bot: ${err}`, "error");
+        }
+      });
+
+      async function refreshAiStatus() {
+        try {
+          const response = await fetch("/api/ai-status");
+          const data = await response.json();
+          const status = document.getElementById("aiStatus");
+          const msg = document.getElementById("aiStatusMessage");
+          status.textContent = data.running ? "Running" : "Stopped";
+          msg.textContent = data.running ? "Ollama is active" : "Ollama is not running";
+        } catch (err) {
+          log(`Failed to fetch AI status: ${err}`, "error");
+        }
+      }
+
+      document.getElementById("startAiBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/ai-start", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Ollama start requested");
+          refreshAiStatus();
+        } catch (err) {
+          log(`Failed to start Ollama: ${err}`, "error");
+        }
+      });
+
+      document.getElementById("stopAiBtn").addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/ai-stop", { method: "POST" });
+          const data = await response.json();
+          log(data.message ?? "Ollama stop requested");
+          refreshAiStatus();
+        } catch (err) {
+          log(`Failed to stop Ollama: ${err}`, "error");
+        }
+      });
+
+      document.getElementById("aiSendBtn").addEventListener("click", async () => {
+        try {
+          const prompt = document.getElementById("aiPrompt").value;
+          const response = await fetch("/api/ai-chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: prompt })
+          });
+          const data = await response.json();
+          if (data.error) {
+            log(data.error, "error");
+            updateAiResponse(data.error);
+          } else {
+            log(data.response ?? "AI responded");
+            updateAiResponse(data.response ?? "");
+          }
+        } catch (err) {
+          log(`Failed to send AI prompt: ${err}`, "error");
+          updateAiResponse(String(err));
+        }
+      });
+
+      connect();
+      refreshBotProcessStatus();
+      refreshAiStatus();
+    </script>
+  </body>
+</html>
